@@ -1,0 +1,7 @@
+﻿  Copying sources remotely to 'os1.engr.oregonstate.edu'
+  Build command not configured, skipping.
+  Invoking 'make', working directory: '/nfs/stak/users/smitchr8/vsprojects/smallsh/'
+  gcc --std=gnu99 -g -Wall  -c -o build/main.o main.c
+  gcc -o ./smallsh build/main.o  
+  
+  Copying file '/nfs/stak/users/smitchr8/vsprojects/smallsh/smallsh' to 'Z:\vsprojects\smallsh\bin\x64\Debug\smallsh'
