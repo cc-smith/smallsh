@@ -46,9 +46,11 @@ struct userInput* parseInputString(char* inputString) {
     strcpy(currInput->command, token);
 
     // The next token is the arguments
-    token = strtok_r(NULL, "<>&\n", &saveptr);
-    currInput->args = calloc(strlen(token) + 1, sizeof(char));
-    strcpy(currInput->args, token);
+    if (strncmp(saveptr, "<", 1) != 0 && strncmp(saveptr, ">", 1) != 0 && strncmp(saveptr, "&", 1) != 0) {
+        token = strtok_r(NULL, "<>&\n", &saveptr);
+        currInput->args = calloc(strlen(token) + 1, sizeof(char));
+        strcpy(currInput->args, token);
+    }
 
     // The next tokens are input files and/or output files
     token = strtok_r(inputCopy, " ", &saveptr);
