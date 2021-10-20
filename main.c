@@ -48,8 +48,10 @@ struct userInput* parseInputString(char* inputString) {
     // The next token is the arguments
     if (strncmp(saveptr, "<", 1) != 0 && strncmp(saveptr, ">", 1) != 0 && strncmp(saveptr, "&", 1) != 0) {
         token = strtok_r(NULL, "<>&\n", &saveptr);
-        currInput->args = calloc(strlen(token) + 1, sizeof(char));
-        strcpy(currInput->args, token);
+        if (token) {
+            currInput->args = calloc(strlen(token) + 1, sizeof(char));
+            strcpy(currInput->args, token);
+        }
     }
 
     // The next tokens are input files and/or output files
@@ -93,19 +95,22 @@ char* variableExpansion(char* inputString) {
     char buffer[sizeof(int) * 8 + 1];
     sprintf(buffer, "%i", pid);
 
-    int i, counter = 0;
+    int i;
+    int pos = 0;    // Keeps track of current position in expandedS
+
+    // Using 2 pointers, check each character in the string and check for instances of "$$"
     for (i = 0; i < strlen(inputString); i++) {
         // Variable $$ found
         if(*ptr1 == *var && *ptr2 == *var) {
             ptr1 += 2;
             ptr2 += 2;
             strcat(expandedString, buffer); // copy the PID to the expanded string
-            counter += strlen(buffer);  // increment counter by length of PID
+            pos += strlen(buffer);  // increment counter by length of PID
         }
         // Variable $$ not found, increment pointer and counter by 1
         else {
-            expandedString[counter] = *ptr1;    // Copy char to expanded string
-            counter++;
+            expandedString[pos] = *ptr1;    // Copy char to expanded string
+            pos++;
             ptr1++;
             ptr2++;
         }
@@ -116,37 +121,70 @@ char* variableExpansion(char* inputString) {
 }
 
 
-
-
-
-int main(void) {
-    struct userInput* newInput;
-    char* inputString;
-    inputString = malloc(2048 * sizeof(char));
-    memset(inputString, '\0', 2048);
-
-    // Get input from user
-    printf(": ");
-    fgets(inputString, 2048, stdin);
-
-    // Transform any expansion variables ("$$") in the input
-    char* expandedString = variableExpansion(inputString);
-
-    // Parse the expanded string
-    newInput = parseInputString(expandedString);
-
-
+void printStruct(struct userInput* input) {
     printf("\nThis is the struct:\n"
         "command: %s\n"
         "args: %s\n"
         "inputFile: %s\n"
         "outputFile: %s\n"
-        "background: %i\n\n",
-        newInput->command,
-        newInput->args,
-        newInput->inputFile,
-        newInput->outputFile,
-        newInput->background);
+        "background: %i\n",
+        input->command,
+        input->args,
+        input->inputFile,
+        input->outputFile,
+        input->background);
+    return;
+}
+
+//stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
+char* changeDir(char* newDir) {
+    /*dir = malloc(2048 * sizeof(char));
+    memset(dir, '\0', 2048);*/
+    char cwd[2048];
+    getcwd(cwd, sizeof(cwd));
+    
+    if (strncmp(newDir, cwd, strlen(newDir)) == 0) {
+        printf("ABSOLUTE\n");
+    }
+
+
+    printf("1 - Current working dir: %s\n", cwd);
+    if (newDir) {
+        chdir(newDir);
+        getcwd(cwd, sizeof(cwd));
+        printf("2 - Current working dir: %s\n", cwd);
+    }
+    return cwd;
+}
+
+int main(void) {
+    struct userInput* parsedInput;
+    char* inputString;
+    inputString = malloc(2048 * sizeof(char));
+    memset(inputString, '\0', 2048);
+
+    
+    while (strcmp(inputString, "exit") != 0) {
+        // Get input from user
+        printf(": ");
+        fgets(inputString, 2048, stdin);
+
+        // Transform any expansion variables ("$$") in the input
+        char* expandedString = variableExpansion(inputString);
+
+        // Parse the input into a struct
+        parsedInput = parseInputString(expandedString);
+        printStruct(parsedInput);
+
+        // Check built in commands (cd, exit, status)
+        if (strcmp(parsedInput->command, "cd") == 0) {
+            changeDir(parsedInput->args);
+        }
+
+
+
+    }
+    
 
     return EXIT_SUCCESS;
 }
