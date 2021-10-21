@@ -138,22 +138,29 @@ void printStruct(struct userInput* input) {
 
 //stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
 char* changeDir(char* newDir) {
-    /*dir = malloc(2048 * sizeof(char));
-    memset(dir, '\0', 2048);*/
+    char* dir;
     char cwd[2048];
+    memset(cwd, '\0', 2048); 
     getcwd(cwd, sizeof(cwd));
-    
-    if (strncmp(newDir, cwd, strlen(newDir)) == 0) {
-        printf("ABSOLUTE\n");
+
+    // User did not specify path, change directory to HOME
+    if (!newDir) {
+        dir = getenv("HOME");
     }
 
-
-    printf("1 - Current working dir: %s\n", cwd);
-    if (newDir) {
-        chdir(newDir);
-        getcwd(cwd, sizeof(cwd));
-        printf("2 - Current working dir: %s\n", cwd);
+    // User specified path
+    else {
+        dir = newDir;
     }
+
+    // Path is not valid
+    if (chdir(dir) != 0){
+        printf("%s: no such file or directory", dir);
+        return;
+    }
+
+    // Return current working dircectory
+    getcwd(cwd, sizeof(cwd));
     return cwd;
 }
 
@@ -163,11 +170,21 @@ int main(void) {
     inputString = malloc(2048 * sizeof(char));
     memset(inputString, '\0', 2048);
 
-    
-    while (strcmp(inputString, "exit") != 0) {
+    for(;;) {
+
         // Get input from user
         printf(": ");
         fgets(inputString, 2048, stdin);
+
+        // Ignore comments ("#") and blank lines 
+        if (strncmp(inputString, "#", 1) == 0 || inputString[0] == '\n') {
+            continue;
+        }
+
+        // Exit from shell
+        if (strcmp(inputString, "exit")) {
+            return EXIT_SUCCESS;
+        }
 
         // Transform any expansion variables ("$$") in the input
         char* expandedString = variableExpansion(inputString);
@@ -180,8 +197,7 @@ int main(void) {
         if (strcmp(parsedInput->command, "cd") == 0) {
             changeDir(parsedInput->args);
         }
-
-
+     
 
     }
     

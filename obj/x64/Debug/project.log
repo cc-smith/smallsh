@@ -3,7 +3,10 @@
   Invoking 'make', working directory: '/nfs/stak/users/smitchr8/vsprojects/smallsh/'
   gcc --std=gnu99 -g -Wall  -c -o build/main.o main.c
   main.c: In function ‘changeDir’:
-  main.c:157:5: warning: function returns address of local variable [-Wreturn-local-addr]
+  main.c:159:9: warning: ‘return’ with no value, in function returning non-void [enabled by default]
+           return;
+           ^
+  main.c:164:5: warning: function returns address of local variable [-Wreturn-local-addr]
        return cwd;
        ^
   gcc -o ./smallsh build/main.o  
