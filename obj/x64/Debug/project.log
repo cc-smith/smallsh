@@ -3,12 +3,22 @@
   Invoking 'make', working directory: '/nfs/stak/users/smitchr8/vsprojects/smallsh/'
   gcc --std=gnu99 -g -Wall  -c -o build/main.o main.c
   main.c: In function ‘changeDir’:
-  main.c:159:9: warning: ‘return’ with no value, in function returning non-void [enabled by default]
+  main.c:189:9: warning: ‘return’ with no value, in function returning non-void [enabled by default]
            return;
            ^
-  main.c:164:5: warning: function returns address of local variable [-Wreturn-local-addr]
+  main.c:194:5: warning: function returns address of local variable [-Wreturn-local-addr]
        return cwd;
        ^
+  main.c: In function ‘main’:
+  main.c:262:13: warning: passing argument 1 of ‘changeDir’ from incompatible pointer type [enabled by default]
+               changeDir(parsedInput->args);
+               ^
+  main.c:170:7: note: expected ‘char *’ but argument is of type ‘char **’
+   char* changeDir(char* newDir) {
+         ^
+  main.c:266:13: warning: unused variable ‘execFlag’ [-Wunused-variable]
+           int execFlag = execCommand(parsedInput);
+               ^
   gcc -o ./smallsh build/main.o  
   
   Copying file '/nfs/stak/users/smitchr8/vsprojects/smallsh/smallsh' to 'Z:\vsprojects\smallsh\bin\x64\Debug\smallsh'

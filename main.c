@@ -9,6 +9,8 @@
 #include <math.h> 
 #include <fcntl.h>
 #include <stdbool.h>
+#include <sys/wait.h> 
+
 
 /* struct for user input */
 struct userInput
@@ -33,7 +35,7 @@ struct userInput* parseInputString(char* inputString) {
     char backgroundFlag[1];
     backgroundFlag[0] = inputCopy[strlen(inputCopy) - 3];
     if (strncmp(backgroundFlag, "&", 1) == 0) {
-        currInput->background = 1; // "&" detected, set the background process flag
+        currInput->background = 1; // "&" detected, set the background process flag to true
     }
     else {
         currInput->background = 0;
@@ -159,7 +161,6 @@ void printStruct(struct userInput* input) {
     while (input->args[i] != NULL) {
             printf("arg%i: %s\n", i, input->args[i]);
             i++;
-
         }
     printf("--------------------\n\n");
     return;
@@ -193,13 +194,136 @@ char* changeDir(char* newDir) {
     return cwd;
 }
 
+
+
+struct process
+{
+    int pid;
+    struct process* next;
+};
+
+
+
+
+struct process* storePid(int pid, struct process* head, struct process* tail)
+{
+
+    // Get a new movie node corresponding to the current line
+    struct process* curProcess = malloc(sizeof(struct process));
+    curProcess->pid = pid;
+    curProcess->next = NULL;
+
+    // Is this the first node in the linked list?
+    if (head == NULL)
+    {
+        // This is the first node in the linked link
+        // Set the head and the tail to this node
+        head = curProcess;
+        tail = curProcess;
+    }
+    else
+    {
+        // This is not the first node.
+        // Add this node to the list and advance the tail
+        tail->next = curProcess;
+        tail = curProcess;
+    }
+    return head;
+}
+
+int execCommand(struct userInput* parsedInput, struct process* head, struct process* tail) {
+
+    pid_t spawnPid = -5;
+    int childExitMethod = -5;
+    int childStatus;
+
+    spawnPid = fork();
+    int pid;
+
+
+    switch (spawnPid) {
+    case -1:
+        perror("fork()\n");
+        exit(1);
+        break;
+    case 0:
+        pid = getpid();
+        //printf("background pid is %d\n", pid);
+
+        if (parsedInput->background == 1) {
+            printf("background pid is %d\n", pid);
+        }
+
+        storePid(pid, head, tail);
+     /*   if (strcmp(parsedInput->command, "ps") != 0) {
+            sleep(3);
+        }*/
+        execvp(parsedInput->command, parsedInput->args);
+        //spawnPid = waitpid(pid, &childStatus, WNOHANG);
+        //printf("pid %d exited, status=%d\n", pid, WEXITSTATUS(childStatus));
+
+        perror("CHILD: exec failure!\n");
+        exit(1);
+        break;
+
+    default:
+        // In the parent process
+        // Wait for child's termination
+        if (parsedInput->background != 1) {
+            spawnPid = waitpid(spawnPid, &childStatus, 0);
+        }
+
+
+        //else {
+        //    do {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    } while (!WIFEXITED(childStatus) && !WIFSIGNALED(childStatus));
+        //    if (WIFEXITED(childStatus)) {
+        //        printf("exited, status=%d\n", WEXITSTATUS(childStatus));
+        //    }
+        //    /*spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    while (spawnPid == 0) {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    }
+        //    printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);*/
+        //  /*  while (spawnPid == 0) {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+
+        //    }*/
+        //}
+        break;
+      }        
+
+      //printf("pid %d exited, status=%d\n", pid, WEXITSTATUS(childStatus));
+    return pid;
+}
+
+
+
+
+
+
 int main(void) {
     struct userInput* parsedInput;
     char* inputString;
     inputString = malloc(2048 * sizeof(char));
     memset(inputString, '\0', 2048);
 
+
+
+    // Initialize new linked list of processes
+    // The head of the linked list
+    struct process* head = NULL;
+    // The tail of the linked list
+    struct process* tail = NULL;
+
+    pid_t pid;
+    int status;
+
     for(;;) {
+        pid = waitpid(-1, &status, WNOHANG);
+        if (pid > 0)
+            printf("background pid %d is done: exit value %d\n", pid, status);
 
         // Get input from user
         printf(": ");
@@ -220,7 +344,7 @@ int main(void) {
 
         // Parse the input into a struct
         parsedInput = parseInputString(expandedString);
-        printStruct(parsedInput);
+        //printStruct(parsedInput);
 
         // Check if command is a built in command (cd, exit, status)
         if (strcmp(parsedInput->command, "cd") == 0) {
@@ -228,8 +352,7 @@ int main(void) {
         }
         
         // Execute all other commands
-        int execFlag = execCommand(parsedInput);
-        execvp(parsedInput->command, parsedInput->args);
+        int execFlag = execCommand(parsedInput, head, tail);
 
     }
     
