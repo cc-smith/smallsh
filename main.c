@@ -204,7 +204,6 @@ struct process
 
 
 
-
 struct process* storePid(int pid, struct process* head, struct process* tail)
 {
 
@@ -299,8 +298,48 @@ int execCommand(struct userInput* parsedInput, struct process* head, struct proc
 }
 
 
+// Exploration: Processes and I/O
+int redirectIO(char* inputFile, char* outputFile) {
 
+    if (inputFile) {
+        // Open source file
+        int sourceFD = open(inputFile, O_RDONLY);
+        if (sourceFD == -1) {
+            fprintf(stderr, "cannot open %s for input\n", inputFile);
+            perror("");
+            fflush(stderr);
+            return 1;
+        }
 
+        // Redirect stdin to source file
+        int result = dup2(sourceFD, 0);
+        if (result == -1) {
+            perror("source dup2()");
+            return 1;
+        }
+    }
+
+    if (outputFile) {
+        // Open target file
+        int targetFD = open(outputFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (targetFD == -1) {
+            fprintf(stderr, "cannot open %s for output", outputFile);
+            perror("");
+            fflush(stderr);
+            return 1;
+        }
+
+        // Redirect stdout to target file
+        int result = dup2(targetFD, 1);
+        if (result == -1) {
+            perror("target dup2()");
+            return 1;
+        }
+    }
+
+    // The stdin and stdout are pointing to files
+    return(0);
+}
 
 
 int main(void) {
@@ -319,6 +358,7 @@ int main(void) {
 
     pid_t pid;
     int status;
+    int exitValue = 0;
 
     for(;;) {
         pid = waitpid(-1, &status, WNOHANG);
@@ -334,25 +374,48 @@ int main(void) {
             continue;
         }
 
-        // Exit from shell
-    /*    if (strcmp(inputString, "exit")) {
-            return EXIT_SUCCESS;
-        }*/
-
         // Transform any expansion variables ("$$") in the input
         char* expandedString = variableExpansion(inputString);
 
         // Parse the input into a struct
         parsedInput = parseInputString(expandedString);
-        //printStruct(parsedInput);
 
-        // Check if command is a built in command (cd, exit, status)
-        if (strcmp(parsedInput->command, "cd") == 0) {
+        // Built in command: cd
+        if (strcmp(parsedInput->command, "exit") == 0) {
+            exitShell();
+        }
+
+        // Built in command: cd
+        else if (strcmp(parsedInput->command, "cd") == 0) {
             changeDir(parsedInput->args);
         }
-        
+
+        // Built in command: status
+        else if (strcmp(parsedInput->command, "status") == 0) {
+            printf("exit value %i\n", exitValue);
+        }
+
+        // Handle input/output redirection
+        else if (parsedInput->inputFile || parsedInput->outputFile) {
+            int saved_stdout = dup(1);
+            int saved_stdin = dup(0);
+
+            exitValue = redirectIO(parsedInput->inputFile, parsedInput->outputFile);
+            if (exitValue == 0) {
+                exitValue = execCommand(parsedInput, head, tail);
+            }
+
+            dup2(saved_stdout, 1);
+            close(saved_stdout);
+
+            dup2(saved_stdin, 0);
+            close(saved_stdin);
+        }
+
         // Execute all other commands
-        int execFlag = execCommand(parsedInput, head, tail);
+        else {
+           exitValue = execCommand(parsedInput, head, tail);
+        }
 
     }
     
