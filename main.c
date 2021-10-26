@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <sys/wait.h> 
+int sigtstpState = 0;
 
 
 /* struct for user input */
@@ -21,6 +22,40 @@ struct userInput
     char* outputFile;
     int background;
 };
+
+void printStruct(struct userInput* input) {
+    printf("\n\n--------------------\nThis is the struct:\n\n"
+        "command: %s\n"
+        "inputFile: %s\n"
+        "outputFile: %s\n"
+        "background: %i\n",
+        input->command,
+        input->inputFile,
+        input->outputFile,
+        input->background);
+    int i = 0;
+    while (input->args[i] != NULL) {
+        printf("arg%i: %s\n", i, input->args[i]);
+        i++;
+    }
+    printf("--------------------\n\n");
+    return;
+}
+
+
+
+//void printProcesses(struct process* p) {
+//    printf("****p->pid", p->pid);
+//    while (p != NULL) {
+//        printf("\n\n--------------------\nProcesses:\n\n"
+//            "pid: %i\n",
+//            p->pid);
+//        p = p->next;
+//    }
+//
+//    printf("--------------------\n\n");
+//    return;
+//}
 
 struct userInput* parseInputString(char* inputString) {
 
@@ -62,7 +97,7 @@ struct userInput* parseInputString(char* inputString) {
         if (token) {
             // Store first argument
             int i = 1;
-            char* token2 = strtok_r(token, " ", &saveptr2);
+            char* token2 = strtok_r(token, " \n", &saveptr2);
             currInput->args[i] = malloc(strlen(token2) + 1);
             strcpy(currInput->args[i], token2);
             i++;
@@ -79,29 +114,27 @@ struct userInput* parseInputString(char* inputString) {
     }
 
     // The next tokens are input files and/or output files
-    token = strtok_r(inputCopy, " ", &saveptr);
+    token = strtok_r(inputCopy, " \n", &saveptr);
     while (token != NULL) {
 
         // Token is an input file
         if (strncmp(token, "<", 1) == 0) {
-            token = strtok_r(NULL, " ", &saveptr);
+            token = strtok_r(NULL, " \n", &saveptr);
             currInput->inputFile = calloc(strlen(token) + 1, sizeof(char));
             strcpy(currInput->inputFile, token);
         }
         // Token is an output file
         else if (strncmp(token, ">", 1) == 0) {
-            token = strtok_r(NULL, " ", &saveptr);
+            token = strtok_r(NULL, " \n", &saveptr);
             currInput->outputFile = calloc(strlen(token) + 1, sizeof(char));
             strcpy(currInput->outputFile, token);
         }
         // Get next token 
-        token = strtok_r(NULL, " ", &saveptr);
+        token = strtok_r(NULL, " \n", &saveptr);
     }
 
     return currInput;
 }
-
-
 
 char* variableExpansion(char* inputString) {
     // Initialize character pointers 
@@ -146,28 +179,8 @@ char* variableExpansion(char* inputString) {
     return expandedString;
 }
 
-
-void printStruct(struct userInput* input) {
-    printf("\n\n--------------------\nThis is the struct:\n\n"
-        "command: %s\n"
-        "inputFile: %s\n"
-        "outputFile: %s\n"
-        "background: %i\n",
-        input->command,
-        input->inputFile,
-        input->outputFile,
-        input->background);
-    int i = 0;
-    while (input->args[i] != NULL) {
-            printf("arg%i: %s\n", i, input->args[i]);
-            i++;
-        }
-    printf("--------------------\n\n");
-    return;
-}
-
 //stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
-char* changeDir(char* newDir) {
+void changeDir(char* newDir) {
     char* dir;
     char cwd[2048];
     memset(cwd, '\0', 2048); 
@@ -191,32 +204,8 @@ char* changeDir(char* newDir) {
 
     // Return current working dircectory
     getcwd(cwd, sizeof(cwd));
-    return cwd;
-}
-
-
-
-struct process
-{
-    pid_t pid;
-    struct process* next;
-};
-
-void printProcesses(struct process* p) {
-    printf("****p->pid", p->pid);
-    while (p != NULL) {
-        printf("\n\n--------------------\nProcesses:\n\n"
-                "pid: %i\n",
-                p->pid);
-        p = p->next;
-    }
-
-    printf("--------------------\n\n");
     return;
 }
-
-
-
 
 // Exploration: Processes and I/O
 int redirectIO(char* inputFile, char* outputFile) {
@@ -225,9 +214,7 @@ int redirectIO(char* inputFile, char* outputFile) {
         // Open source file
         int sourceFD = open(inputFile, O_RDONLY);
         if (sourceFD == -1) {
-            fprintf(stderr, "cannot open %s for input\n", inputFile);
-            perror("");
-            fflush(stderr);
+            printf("cannot open %s for input\n", inputFile);
             return 1;
         }
 
@@ -243,9 +230,7 @@ int redirectIO(char* inputFile, char* outputFile) {
         // Open target file
         int targetFD = open(outputFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (targetFD == -1) {
-            fprintf(stderr, "cannot open %s for output", outputFile);
-            perror("");
-            fflush(stderr);
+            printf("cannot open %s for output", outputFile);
             return 1;
         }
 
@@ -261,33 +246,6 @@ int redirectIO(char* inputFile, char* outputFile) {
     return(0);
 }
 
-struct process* storePid(int pid, struct process* head, struct process* tail)
-{
-    printf("PID: %i", pid);
-
-    // Get a new movie node corresponding to the current line
-    struct process* curProcess = malloc(sizeof(struct process));
-    curProcess->pid = pid;
-    curProcess->next = NULL;
-
-    // Is this the first node in the linked list?
-    if (head == NULL)
-    {
-        // This is the first node in the linked link
-        // Set the head and the tail to this node
-        head = curProcess;
-        tail = curProcess;
-    }
-    else
-    {
-        // This is not the first node.
-        // Add this node to the list and advance the tail
-        tail->next = curProcess;
-        tail = curProcess;
-    }
-    printf("\n\nHEAD: %i", head->pid);
-    return head;
-}
 
 
 
@@ -321,21 +279,76 @@ void handle_SIGINT(int signo) {
     write(STDOUT_FILENO, message, 23);
 }
 
+void handle_SIGTSTP(int signo) {
+    if (sigtstpState == 0) {
+        char* message = "\nEntering foreground-only mode (& is now ignored)\n";
+        sigtstpState = 1;
+        write(STDOUT_FILENO, message, 50);
+    }
+    else {
+        char* message = "\nExiting foreground-only mode\n";
+        sigtstpState = 0;
+        write(STDOUT_FILENO, message, 30);
+    }
+
+    return;
+}
+
+
+
+
+
+struct process
+{
+    pid_t pid;
+    struct process* next;
+};
+struct process* storePid(int pid, struct process* head, struct process* tail)
+{
+    printf("PID: %i", pid);
+
+    // Get a new movie node corresponding to the current line
+    struct process* curProcess = malloc(sizeof(struct process));
+    curProcess->pid = pid;
+    curProcess->next = NULL;
+
+
+
+
+    // Is this the first node in the linked list?
+    if (head == NULL)
+    {
+        // This is the first node in the linked link
+        // Set the head and the tail to this node
+        head = curProcess;
+        tail = curProcess;
+    }
+    else
+    {
+        // This is not the first node.
+        // Add this node to the list and advance the tail
+        tail->next = curProcess;
+        tail = curProcess;
+    }
+    printf("\n\nHEAD: %i", head->pid);
+    return head;
+}
+
+
 
 
 int execCommand(struct userInput* parsedInput, struct process* head, struct process* tail) {
 
-    struct sigaction SIGINT_action = { 0 };
 
 
     pid_t spawnPid = -5;
     int childExitMethod = -5;
     int childStatus;
 
-
+    struct sigaction SIGINT_action = { 0 };
     // For background processes, ignore ctrl+c
     if (parsedInput->background == 1) {
-        //signal(SIGCHLD, handler);
+        signal(SIGCHLD, handler);
         // set the sa_handler to ignore SIGINT
         SIGINT_action.sa_handler = SIG_IGN;
         // No flags set
@@ -371,19 +384,14 @@ int execCommand(struct userInput* parsedInput, struct process* head, struct proc
         pid = getpid();
         //storePid(pid);
 
-
-
         if (parsedInput->background == 1) {
             printf("background pid is %d\n", pid);
         }
 
         execvp(parsedInput->command, parsedInput->args);
+        printf("%s: no such file or directory\n", parsedInput->command);
 
-        fprintf(stderr, "%s", parsedInput->command);
-        perror("");
-        fflush(stderr);
-
-        return 1;
+        return -5;
         break;
 
     default:
@@ -391,6 +399,15 @@ int execCommand(struct userInput* parsedInput, struct process* head, struct proc
         // Wait for child's termination
         if (parsedInput->background != 1) {
             spawnPid = waitpid(spawnPid, &childStatus, 0);
+
+            if (WIFEXITED(childStatus)) {
+                return WEXITSTATUS(childStatus);
+            }
+            else if (WIFSTOPPED(childStatus)) {
+                //printf("terminated by signal %d\n", WSTOPSIG(childStatus));
+                return WSTOPSIG(childStatus);
+            }
+          
         }
 
 
@@ -418,29 +435,117 @@ int execCommand(struct userInput* parsedInput, struct process* head, struct proc
 }
 
 
-
-int test = 0;
-
-
-
-void handle_SIGTSTP(int signo) {
-    if (test == 0) {
-        char* message = "\nEntering foreground-only mode (& is now ignored)\n";
-        test = 1;
-        write(STDOUT_FILENO, message, 50);
+void storePidInArray(pid_t pid, int *pidArray) {
+    int i = 0;
+    while (pidArray[i] != -1) {
+        i++;
     }
-    else {
-        char* message = "\nExiting foreground-only mode\n";
-        test = 0;
-        write(STDOUT_FILENO, message, 30);
-    }
+    pidArray[i] = pid;
 
+  /*  i = 0;
+    while (pidArray[i] != -1) {
+        printf("\npid%i: %i", i, pid);
+        i++;
+    }*/
     return;
 }
 
+int execCommand2(struct userInput* parsedInput, int *pidArray) {
+
+    pid_t spawnPid = -5;
+    int childExitMethod = -5;
+    int childStatus;
+
+    struct sigaction SIGINT_action = { 0 };
+    // For background processes, ignore ctrl+c
+    if (parsedInput->background == 1) {
+        signal(SIGCHLD, handler);
+        // set the sa_handler to ignore SIGINT
+        SIGINT_action.sa_handler = SIG_IGN;
+        // No flags set
+        SIGINT_action.sa_flags = 0;
+        // Install our signal handler
+        sigaction(SIGINT, &SIGINT_action, NULL);
+    }
+
+    // For foreground processes, do not ignore ctrl+c
+    else {
+        // Fill out the SIGINT_action struct
+        // Register handle_SIGINT as the signal handler
+        SIGINT_action.sa_handler = handle_SIGINT;
+        // Block all catchable signals while handle_SIGINT is running
+        sigfillset(&SIGINT_action.sa_mask);
+        // No flags set
+        SIGINT_action.sa_flags = 0;
+        sigaction(SIGINT, &SIGINT_action, NULL);
+    }
+
+    spawnPid = fork();
+    int pid;
+
+
+    switch (spawnPid) {
+    case -1:
+        perror("fork()\n");
+        return 1;
+        break;
+
+    case 0:
+
+        pid = getpid();
+        if (parsedInput->background == 1) {
+
+            printf("background pid is %d\n", pid);
+        }
+
+        execvp(parsedInput->command, parsedInput->args);
+        printf("%s: no such file or directory\n", parsedInput->command);
+
+        return -5;
+        break;
+
+    default:
+        // In the parent process
+        // Wait for child's termination
+        if (parsedInput->background != 1) {
+            spawnPid = waitpid(spawnPid, &childStatus, 0);
+            storePidInArray(spawnPid, pidArray);
+
+            if (WIFEXITED(childStatus)) {
+                return WEXITSTATUS(childStatus);
+            }
+            else if (WIFSTOPPED(childStatus)) {
+                //printf("terminated by signal %d\n", WSTOPSIG(childStatus));
+                return WSTOPSIG(childStatus);
+            }
+
+        }
+        storePidInArray(spawnPid, pidArray);
 
 
 
+        //else {
+        //    do {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    } while (!WIFEXITED(childStatus) && !WIFSIGNALED(childStatus));
+        //    if (WIFEXITED(childStatus)) {
+        //        printf("exited, status=%d\n", WEXITSTATUS(childStatus));
+        //    }
+        //    /*spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    while (spawnPid == 0) {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    }
+        //    printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);*/
+        //  /*  while (spawnPid == 0) {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+
+        //    }*/
+        //}
+        break;
+    }
+
+    return pid;
+}
 
 
 int main(void) {
@@ -479,11 +584,22 @@ int main(void) {
     struct process* tail = malloc(sizeof(struct process));
     tail = NULL;
 
+    int pidArray[1000];
+    memset(pidArray, -1, sizeof(pidArray));
+
+
+
     pid_t pid;
     int status;
     int exitValue = 0;
 
     for(;;) {
+   /*     int i = 0;
+        while (pidArray[i] != -1) {
+            printf("\n**pid%i: %i\n", i, pidArray[i]);
+            i++;
+        }*/
+
        /* pid = waitpid(-1, &status, WNOHANG);
         if (pid > 0)
             printf("background pid %d is done: exit value %d\n", pid, status);*/
@@ -502,6 +618,7 @@ int main(void) {
 
         // Parse the input into a struct
         parsedInput = parseInputString(expandedString);
+        //printStruct(parsedInput);
 
         // Built in command: exit
         if (strcmp(parsedInput->command, "exit") == 0) {
@@ -511,12 +628,18 @@ int main(void) {
 
         // Built in command: cd
         else if (strcmp(parsedInput->command, "cd") == 0) {
-            changeDir(parsedInput->args);
+            changeDir(parsedInput->args[1]);
         }
 
         // Built in command: status
         else if (strcmp(parsedInput->command, "status") == 0) {
-            printf("exit value %i\n", exitValue);
+            if (exitValue <= 1) {
+                printf("exit value %i\n", exitValue);
+
+            }
+            else {
+                printf("terminated by signal %i\n", exitValue);
+            }
         }
 
         // Handle input/output redirection
@@ -538,8 +661,14 @@ int main(void) {
 
         // Execute all other commands
         else {
-           pid = execCommand(parsedInput, head, tail);
+            // Ignore the background operator ("&") if the shell is in foreground only mode
+            if ( (sigtstpState == 1) && (parsedInput->background == 1)) {
+                parsedInput->background = 0;
+            }
 
+           //pid = execCommand(parsedInput, head, tail);
+           pid = execCommand2(parsedInput, pidArray);
+           exitValue = pid;
            
 
            //head = storePid(exitValue, head, tail);
