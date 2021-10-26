@@ -198,104 +198,24 @@ char* changeDir(char* newDir) {
 
 struct process
 {
-    int pid;
+    pid_t pid;
     struct process* next;
 };
 
-
-
-struct process* storePid(int pid, struct process* head, struct process* tail)
-{
-
-    // Get a new movie node corresponding to the current line
-    struct process* curProcess = malloc(sizeof(struct process));
-    curProcess->pid = pid;
-    curProcess->next = NULL;
-
-    // Is this the first node in the linked list?
-    if (head == NULL)
-    {
-        // This is the first node in the linked link
-        // Set the head and the tail to this node
-        head = curProcess;
-        tail = curProcess;
+void printProcesses(struct process* p) {
+    printf("****p->pid", p->pid);
+    while (p != NULL) {
+        printf("\n\n--------------------\nProcesses:\n\n"
+                "pid: %i\n",
+                p->pid);
+        p = p->next;
     }
-    else
-    {
-        // This is not the first node.
-        // Add this node to the list and advance the tail
-        tail->next = curProcess;
-        tail = curProcess;
-    }
-    return head;
+
+    printf("--------------------\n\n");
+    return;
 }
 
-int execCommand(struct userInput* parsedInput, struct process* head, struct process* tail) {
 
-    pid_t spawnPid = -5;
-    int childExitMethod = -5;
-    int childStatus;
-
-    spawnPid = fork();
-    int pid;
-
-
-    switch (spawnPid) {
-    case -1:
-        perror("fork()\n");
-        exit(1);
-        break;
-    case 0:
-        pid = getpid();
-        //printf("background pid is %d\n", pid);
-
-        if (parsedInput->background == 1) {
-            printf("background pid is %d\n", pid);
-        }
-
-        storePid(pid, head, tail);
-     /*   if (strcmp(parsedInput->command, "ps") != 0) {
-            sleep(3);
-        }*/
-        execvp(parsedInput->command, parsedInput->args);
-        //spawnPid = waitpid(pid, &childStatus, WNOHANG);
-        //printf("pid %d exited, status=%d\n", pid, WEXITSTATUS(childStatus));
-
-        perror("CHILD: exec failure!\n");
-        exit(1);
-        break;
-
-    default:
-        // In the parent process
-        // Wait for child's termination
-        if (parsedInput->background != 1) {
-            spawnPid = waitpid(spawnPid, &childStatus, 0);
-        }
-
-
-        //else {
-        //    do {
-        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-        //    } while (!WIFEXITED(childStatus) && !WIFSIGNALED(childStatus));
-        //    if (WIFEXITED(childStatus)) {
-        //        printf("exited, status=%d\n", WEXITSTATUS(childStatus));
-        //    }
-        //    /*spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-        //    while (spawnPid == 0) {
-        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-        //    }
-        //    printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);*/
-        //  /*  while (spawnPid == 0) {
-        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-
-        //    }*/
-        //}
-        break;
-      }        
-
-      //printf("pid %d exited, status=%d\n", pid, WEXITSTATUS(childStatus));
-    return pid;
-}
 
 
 // Exploration: Processes and I/O
@@ -341,29 +261,232 @@ int redirectIO(char* inputFile, char* outputFile) {
     return(0);
 }
 
+struct process* storePid(int pid, struct process* head, struct process* tail)
+{
+    printf("PID: %i", pid);
+
+    // Get a new movie node corresponding to the current line
+    struct process* curProcess = malloc(sizeof(struct process));
+    curProcess->pid = pid;
+    curProcess->next = NULL;
+
+    // Is this the first node in the linked list?
+    if (head == NULL)
+    {
+        // This is the first node in the linked link
+        // Set the head and the tail to this node
+        head = curProcess;
+        tail = curProcess;
+    }
+    else
+    {
+        // This is not the first node.
+        // Add this node to the list and advance the tail
+        tail->next = curProcess;
+        tail = curProcess;
+    }
+    printf("\n\nHEAD: %i", head->pid);
+    return head;
+}
+
+
+
+void handler(int sig)
+{
+    //pid_t pid = wait(NULL);
+    int status;
+
+    pid_t pid = waitpid(-1, &status, WNOHANG);
+
+    if (pid != -1) {
+        if (WIFEXITED(status)) {
+            int es = WEXITSTATUS(status);
+            printf("background pid %d is done: exit value %d\n", pid, es);
+        }
+        else {
+            printf("background pid %d is done: terminated by signal %d\n", pid, sig);
+        }
+    }
+
+    /* WARNING : to show the call of the handler, do not do that
+       in a 'real' code, we are in a handler of a signal */
+    //printf("Child pid %i ended (signal %i)\n", pid, sig);
+
+    /* does 'something' to allow the parent to know chpid
+       terminated in a way compatible with parent requirement */
+}
+
+void handle_SIGINT(int signo) {
+    char* message = "terminated by signal 2\n";
+    write(STDOUT_FILENO, message, 23);
+}
+
+
+
+int execCommand(struct userInput* parsedInput, struct process* head, struct process* tail) {
+
+    struct sigaction SIGINT_action = { 0 };
+
+
+    pid_t spawnPid = -5;
+    int childExitMethod = -5;
+    int childStatus;
+
+
+    // For background processes, ignore ctrl+c
+    if (parsedInput->background == 1) {
+        //signal(SIGCHLD, handler);
+        // set the sa_handler to ignore SIGINT
+        SIGINT_action.sa_handler = SIG_IGN;
+        // No flags set
+        SIGINT_action.sa_flags = 0;
+        // Install our signal handler
+        sigaction(SIGINT, &SIGINT_action, NULL);
+    }
+
+    // For foreground processes, do not ignore ctrl+c
+    else {
+        // Fill out the SIGINT_action struct
+        // Register handle_SIGINT as the signal handler
+        SIGINT_action.sa_handler = handle_SIGINT;
+        // Block all catchable signals while handle_SIGINT is running
+        sigfillset(&SIGINT_action.sa_mask);
+        // No flags set
+        SIGINT_action.sa_flags = 0;
+        sigaction(SIGINT, &SIGINT_action, NULL);
+    }
+
+    spawnPid = fork();
+    int pid;
+
+
+    switch (spawnPid) {
+    case -1:
+        perror("fork()\n");
+        return 1;
+        break;
+
+    case 0:
+
+        pid = getpid();
+        //storePid(pid);
+
+
+
+        if (parsedInput->background == 1) {
+            printf("background pid is %d\n", pid);
+        }
+
+        execvp(parsedInput->command, parsedInput->args);
+
+        fprintf(stderr, "%s", parsedInput->command);
+        perror("");
+        fflush(stderr);
+
+        return 1;
+        break;
+
+    default:
+        // In the parent process
+        // Wait for child's termination
+        if (parsedInput->background != 1) {
+            spawnPid = waitpid(spawnPid, &childStatus, 0);
+        }
+
+
+        //else {
+        //    do {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    } while (!WIFEXITED(childStatus) && !WIFSIGNALED(childStatus));
+        //    if (WIFEXITED(childStatus)) {
+        //        printf("exited, status=%d\n", WEXITSTATUS(childStatus));
+        //    }
+        //    /*spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    while (spawnPid == 0) {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+        //    }
+        //    printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);*/
+        //  /*  while (spawnPid == 0) {
+        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
+
+        //    }*/
+        //}
+        break;
+    }
+
+    return pid;
+}
+
+
+
+int test = 0;
+
+
+
+void handle_SIGTSTP(int signo) {
+    if (test == 0) {
+        char* message = "\nEntering foreground-only mode (& is now ignored)\n";
+        test = 1;
+        write(STDOUT_FILENO, message, 50);
+    }
+    else {
+        char* message = "\nExiting foreground-only mode\n";
+        test = 0;
+        write(STDOUT_FILENO, message, 30);
+    }
+
+    return;
+}
+
+
+
+
+
 
 int main(void) {
+
+    // Initialize sigaction struct
+    struct sigaction SIGINT_action = { 0 }, SIGTSTP_action = { 0 };
+
+    // set the sa_handler to ignore SIGINT
+    SIGINT_action.sa_handler = SIG_IGN;
+    // No flags set
+    SIGINT_action.sa_flags = 0;
+    // Install our signal handler
+    sigaction(SIGINT, &SIGINT_action, NULL);
+  
+    // SIGTSTP
+    SIGTSTP_action.sa_handler = handle_SIGTSTP;
+    // Block all catchable signals while handle_SIGUSR2 is running
+    sigfillset(&SIGTSTP_action.sa_mask);
+    // Set auto restart of interrupted system calls
+    SIGTSTP_action.sa_flags = SA_RESTART;
+    // Install our signal handler
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+
+
     struct userInput* parsedInput;
     char* inputString;
     inputString = malloc(2048 * sizeof(char));
     memset(inputString, '\0', 2048);
 
-
-
     // Initialize new linked list of processes
     // The head of the linked list
-    struct process* head = NULL;
+    struct process* head = malloc(sizeof(struct process));
+    head = NULL;
     // The tail of the linked list
-    struct process* tail = NULL;
+    struct process* tail = malloc(sizeof(struct process));
+    tail = NULL;
 
     pid_t pid;
     int status;
     int exitValue = 0;
 
     for(;;) {
-        pid = waitpid(-1, &status, WNOHANG);
+       /* pid = waitpid(-1, &status, WNOHANG);
         if (pid > 0)
-            printf("background pid %d is done: exit value %d\n", pid, status);
+            printf("background pid %d is done: exit value %d\n", pid, status);*/
 
         // Get input from user
         printf(": ");
@@ -380,9 +503,10 @@ int main(void) {
         // Parse the input into a struct
         parsedInput = parseInputString(expandedString);
 
-        // Built in command: cd
+        // Built in command: exit
         if (strcmp(parsedInput->command, "exit") == 0) {
-            exitShell();
+            //printProcesses(head);
+            return EXIT_SUCCESS;
         }
 
         // Built in command: cd
@@ -414,9 +538,13 @@ int main(void) {
 
         // Execute all other commands
         else {
-           exitValue = execCommand(parsedInput, head, tail);
-        }
+           pid = execCommand(parsedInput, head, tail);
 
+           
+
+           //head = storePid(exitValue, head, tail);
+           //printProcesses(head);
+        }
     }
     
 
