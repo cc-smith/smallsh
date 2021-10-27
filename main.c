@@ -141,16 +141,6 @@ int main(void) {
             }
         }
 
-        // Rdirect standard input/output for bg processes if not specified
-        if (parsedInput->background == 1) {
-            if (!(parsedInput->inputFile)) {
-                parsedInput->inputFile = "/dev/null";
-            }
-            if (!(parsedInput->outputFile)) {
-                parsedInput->outputFile = "/dev/null";
-            }
-        }
-
         // Handle input/output redirection
         else if (parsedInput->inputFile || parsedInput->outputFile) {
 
@@ -159,8 +149,7 @@ int main(void) {
             int saved_stdout = dup(1);
 
             // If I/O redirection was succcessful, execute the command
-            exitValue = redirectIO(parsedInput->inputFile, 
-                parsedInput->outputFile);
+            exitValue = redirectIO(parsedInput->inputFile, parsedInput->outputFile);
             if (exitValue == 0) {
                 exitValue = execCommand(parsedInput, pidArray);
             }
@@ -179,9 +168,7 @@ int main(void) {
                 parsedInput->background = 0;
             }
             // Execute the command
-            else {
-                exitValue = execCommand(parsedInput, pidArray);
-            }
+            exitValue = execCommand(parsedInput, pidArray);
         }
     }
 }
@@ -451,6 +438,7 @@ void handler(int sig)
         if (WIFEXITED(status)) {
             exit_pid = pid;
             exit_value = WEXITSTATUS(status);
+
         }
 
         // process was terminated by a signal, set the global variables
