@@ -1,3 +1,11 @@
+
+/*
+* Author: Chris Smith
+* Program: smallsh.c
+* Date: 11/1/2021
+* This program is an implementation of a shell in C.
+*/
+
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,10 +18,17 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <sys/wait.h> 
-int sigtstpState = 0;
-pid_t current_pid = 0;
 
-/* struct for user input */
+#define MAX_ARGS 512        // max number of arguments user can enter
+#define MAX_LENGTH 2048     // max length of command line input
+int sigtstpState = 0;       // flag for storing the state of SIGTSTP
+
+
+static pid_t exit_pid = 0;
+static int exit_value = -5;
+
+
+// struct for storing user input 
 struct userInput
 {
     char* command;
@@ -23,183 +38,176 @@ struct userInput
     int background;
 };
 
-void printStruct(struct userInput* input) {
-    printf("\n\n--------------------\nThis is the struct:\n\n"
-        "command: %s\n"
-        "inputFile: %s\n"
-        "outputFile: %s\n"
-        "background: %i\n",
-        input->command,
-        input->inputFile,
-        input->outputFile,
-        input->background);
-    int i = 0;
-    while (input->args[i] != NULL) {
-        printf("arg%i: %s\n", i, input->args[i]);
-        i++;
+// Function delcarations
+void bgProcessPrint(void);
+struct userInput* parseInputString(char* inputString);
+char* variableExpansion(char* inputString);
+void changeDir(char* newDir);
+int redirectIO(char* inputFile, char* outputFile);
+void handler(int sig);
+void handle_SIGTSTP(int signo);
+void storePidInArray(pid_t pid, int* pidArray);
+int execCommand(struct userInput* parsedInput, int* pidArray);
+
+int main(void) {
+
+    // Initialize sigaction struct
+    struct sigaction SIGINT_action = { 0 }, SIGTSTP_action = { 0 };
+
+    // set the sa_handler to ignore SIGINT and use handler function for STGTSTP
+    SIGINT_action.sa_handler = SIG_IGN;
+    SIGTSTP_action.sa_handler = handle_SIGTSTP;
+
+    // Set flags
+    SIGINT_action.sa_flags = 0;             // No flags set for SIGINT
+    SIGTSTP_action.sa_flags = SA_RESTART;   // Auto restart of system calls
+
+    // Install our signal handlers
+    sigaction(SIGINT, &SIGINT_action, NULL);
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+
+    // Allocate space to store user input string 
+    char* inputString;
+    inputString = malloc(2048 * sizeof(char));
+    memset(inputString, '\0', 2048);
+
+    // Initialize struct where the parsed user input will be stored
+    struct userInput* parsedInput;
+
+    // Allocate space for array which stores process ids
+    int pidArray[1000];
+    memset(pidArray, -1, sizeof(pidArray));
+
+    int exitValue = 0;  // stores the exit code value for most recent fg process
+
+
+    /* 
+    * Display command line prompt to user, parse user input, redirect I/O,
+    * and execute commands
+    */ 
+    for (;;) {
+        // Check if any background processes have ended and notify user
+        bgProcessPrint();
+
+        // Get input from user
+        printf(": ");
+        fflush(stdout);
+        fgets(inputString, 2048, stdin);
+
+        // Ignore comments ("#") and blank lines 
+        if (strncmp(inputString, "#", 1) == 0 || inputString[0] == '\n') {
+            continue;
+        }
+
+        // Transform any expansion variables ("$$") in the input
+        char* expandedString = variableExpansion(inputString);
+
+        // Parse the input and store in a userInput struct
+        parsedInput = parseInputString(expandedString);
+
+        // Execute built in command: exit
+        if (strcmp(parsedInput->command, "exit") == 0) {
+            int i = 0;
+
+            // Loop throught the array of PID's and kill each process
+            while (pidArray[i] != -1) {
+                int result = kill(pidArray[i], SIGKILL);
+                i++;
+            }
+
+            // Exit shell
+            return EXIT_SUCCESS;
+        }
+
+        // Execute built in command: cd
+        else if (strcmp(parsedInput->command, "cd") == 0) {
+            changeDir(parsedInput->args[1]);
+        }
+
+        // Execute built in command: status
+        else if (strcmp(parsedInput->command, "status") == 0) {
+
+            // Process exited normally, display exit value
+            if (exitValue <= 1) {
+                printf("exit value %i\n", exitValue);
+                fflush(stdout);
+
+            // Process was terminated by a signal, display signal value
+            }
+            else {
+                printf("terminated by signal %i\n", exitValue);
+                fflush(stdout);
+            }
+        }
+
+        // Rdirect standard input/output for bg processes if not specified
+        if (parsedInput->background == 1) {
+            if (!(parsedInput->inputFile)) {
+                parsedInput->inputFile = "/dev/null";
+            }
+            if (!(parsedInput->outputFile)) {
+                parsedInput->outputFile = "/dev/null";
+            }
+        }
+
+        // Handle input/output redirection
+        else if (parsedInput->inputFile || parsedInput->outputFile) {
+
+            // Redirect stdin and stdout
+            int saved_stdin = dup(0);
+            int saved_stdout = dup(1);
+
+            // If I/O redirection was succcessful, execute the command
+            exitValue = redirectIO(parsedInput->inputFile, 
+                parsedInput->outputFile);
+            if (exitValue == 0) {
+                exitValue = execCommand(parsedInput, pidArray);
+            }
+
+            // Reset stdin and stdout to default values
+            dup2(saved_stdin, 0);
+            dup2(saved_stdout, 1);
+            close(saved_stdin);
+            close(saved_stdout);
+        }
+
+        // Execute all other commands by passing command to exec function
+        else {
+            // Ignore the background operator ("&") if shell is in fg only mode
+            if ((sigtstpState == 1) && (parsedInput->background == 1)) {
+                parsedInput->background = 0;
+            }
+            // Execute the command
+            else {
+                exitValue = execCommand(parsedInput, pidArray);
+            }
+        }
     }
-    printf("--------------------\n\n");
-    return;
 }
 
-struct process
-{
-    pid_t pid;
-    struct process* next;
-};
-struct process* storePid(int pid, struct process* head, struct process* tail)
-{
-
-    // Get a new movie node corresponding to the current line
-    struct process* curProcess = malloc(sizeof(struct process));
-    curProcess->pid = pid;
-    curProcess->next = NULL;
-
-
-
-
-    // Is this the first node in the linked list?
-    if (head == NULL)
-    {
-        // This is the first node in the linked link
-        // Set the head and the tail to this node
-        head = curProcess;
-        tail = curProcess;
-    }
-    else
-    {
-        // This is not the first node.
-        // Add this node to the list and advance the tail
-        tail->next = curProcess;
-        tail = curProcess;
-    }
-    printf("\n\nHEAD: %i", head->pid);
-    return head;
-}
-//int execCommand2(struct userInput* parsedInput, struct process* head, struct process* tail) {
-//
-//
-//
-//    pid_t spawnPid = -5;
-//    int childExitMethod = -5;
-//    int childStatus;
-//
-//    struct sigaction SIGINT_action = { 0 };
-//    // For background processes, ignore ctrl+c
-//    if (parsedInput->background == 1) {
-//        signal(SIGCHLD, handler);
-//        // set the sa_handler to ignore SIGINT
-//        SIGINT_action.sa_handler = SIG_IGN;
-//        // No flags set
-//        SIGINT_action.sa_flags = 0;
-//        // Install our signal handler
-//        sigaction(SIGINT, &SIGINT_action, NULL);
-//    }
-//
-//    // For foreground processes, do not ignore ctrl+c
-//    else {
-//        // Fill out the SIGINT_action struct
-//        // Register handle_SIGINT as the signal handler
-//        SIGINT_action.sa_handler = handle_SIGINT;
-//        // Block all catchable signals while handle_SIGINT is running
-//        sigfillset(&SIGINT_action.sa_mask);
-//        // No flags set
-//        SIGINT_action.sa_flags = 0;
-//        sigaction(SIGINT, &SIGINT_action, NULL);
-//    }
-//
-//    spawnPid = fork();
-//    int pid;
-//
-//
-//    switch (spawnPid) {
-//    case -1:
-//        perror("fork()\n");
-//        return 1;
-//        break;
-//
-//    case 0:
-//
-//        pid = getpid();
-//        //storePid(pid);
-//
-//        if (parsedInput->background == 1) {
-//            printf("background pid is %d\n", pid);
-//        }
-//
-//        execvp(parsedInput->command, parsedInput->args);
-//        printf("%s: no such file or directory\n", parsedInput->command);
-//
-//        return 1;
-//        break;
-//
-//    default:
-//        // In the parent process
-//        // Wait for child's termination
-//        if (parsedInput->background != 1) {
-//            spawnPid = waitpid(spawnPid, &childStatus, 0);
-//
-//            if (WIFEXITED(childStatus)) {
-//                return WEXITSTATUS(childStatus);
-//            }
-//            else if (WIFSTOPPED(childStatus)) {
-//                //printf("terminated by signal %d\n", WSTOPSIG(childStatus));
-//                return WSTOPSIG(childStatus);
-//            }
-//
-//        }
-//
-//
-//        //else {
-//        //    do {
-//        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-//        //    } while (!WIFEXITED(childStatus) && !WIFSIGNALED(childStatus));
-//        //    if (WIFEXITED(childStatus)) {
-//        //        printf("exited, status=%d\n", WEXITSTATUS(childStatus));
-//        //    }
-//        //    /*spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-//        //    while (spawnPid == 0) {
-//        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-//        //    }
-//        //    printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);*/
-//        //  /*  while (spawnPid == 0) {
-//        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-//
-//        //    }*/
-//        //}
-//        break;
-//    }
-//
-//    return pid;
-//}
-
-//void printProcesses(struct process* p) {
-//    printf("****p->pid", p->pid);
-//    while (p != NULL) {
-//        printf("\n\n--------------------\nProcesses:\n\n"
-//            "pid: %i\n",
-//            p->pid);
-//        p = p->next;
-//    }
-//
-//    printf("--------------------\n\n");
-//    return;
-//}
-
+/* 
+ * Function: parseInputString
+ * Parses a command line string and stores it in a userInput struct
+ * 
+ * inputString: the command line string entered by the user
+ * returns: a userInput struct
+*/
 struct userInput* parseInputString(char* inputString) {
 
     // Initialize a struct in which to store the parsed user input
     struct userInput* currInput = malloc(sizeof(struct userInput));
 
     // Make a copy of the input string for strtok_r calls
-    char inputCopy[2048];
+    char inputCopy[MAX_LENGTH];
     strcpy(inputCopy, inputString);
 
-    // Check if command to be executed in the background
+    // Check if command is to be executed in the background
     char backgroundFlag[1];
     backgroundFlag[0] = inputCopy[strlen(inputCopy) - 2];
+    // If "&" detected in user input, set backgroud flag
     if (strncmp(backgroundFlag, "&", 1) == 0) {
-        currInput->background = 1; // "&" detected, set the background process flag to true
+        currInput->background = 1;
     }
     else {
         currInput->background = 0;
@@ -218,7 +226,8 @@ struct userInput* parseInputString(char* inputString) {
     strcpy(currInput->args[0], token);
 
     // The next token is the arguments
-    if (strncmp(saveptr, "<", 1) != 0 && strncmp(saveptr, ">", 1) != 0 && strncmp(saveptr, "&", 1) != 0) {
+    if (strncmp(saveptr, "<", 1) != 0 && strncmp(saveptr, ">", 1) != 0 && 
+        strncmp(saveptr, "&", 1) != 0) {
         char* saveptr2;
         token = strtok_r(NULL, "<>&\n", &saveptr);
 
@@ -265,6 +274,47 @@ struct userInput* parseInputString(char* inputString) {
     return currInput;
 }
 
+/*
+ * Function: bgProcessPrint
+ * Prints notification to user when a background process has ended
+ *
+ * returns: none
+*/
+void bgProcessPrint(void) {
+
+    // background process has ended
+    if (exit_pid != 0) {
+        // process was terminated by a signal
+        if (exit_value > 1) {
+            printf(
+                "background pid %d is done: terminated by signal %d\n",
+                exit_pid,
+                exit_value
+            );
+        }
+        // process eiited
+        else {
+            printf(
+                "background pid %d is done: exit value %d\n",
+                exit_pid,
+                exit_value
+            );
+        }
+        fflush(stdout);
+
+        // reset the global variables
+        exit_pid = 0;
+        exit_value = -5;
+    }
+}
+
+/*
+ * Function: variableExpansion
+ * Searches a command line string for "$$" and peforms variable expansion
+ * 
+ * inputString: the command line string entered by the user
+ * returns: a string with expanded variables
+*/
 char* variableExpansion(char* inputString) {
     // Initialize character pointers 
     char* ptr1;
@@ -286,7 +336,10 @@ char* variableExpansion(char* inputString) {
     int i;
     int pos = 0;    // Keeps track of current position in expandedS
 
-    // Using 2 pointers, check each character in the string and check for instances of "$$"
+    /* 
+    * Using 2 pointers, check each character in the stringand check
+    * for instances of "$$"
+    */ 
     for (i = 0; i < strlen(inputString); i++) {
         // Variable $$ found
         if(*ptr1 == *var && *ptr2 == *var) {
@@ -303,27 +356,21 @@ char* variableExpansion(char* inputString) {
             ptr2++;
         }
     }
- /*   printf("\nbuffer: %s", buffer);
-    printf("\nEXPANDED STRING: %s", expandedString);*/
     return expandedString;
 }
 
-//stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
+/*
+ * Function: changeDir
+ * Changes the current directory (implementation of "cd" command)
+ * 
+ * newDir: the path of the desired directory
+ * returns: none
+*/
 void changeDir(char* newDir) {
     char* dir;
-    char cwd[2048];
-    memset(cwd, '\0', 2048); 
-    getcwd(cwd, sizeof(cwd));
 
-    // User did not specify path, change directory to HOME
-    if (!newDir) {
-        dir = getenv("HOME");
-    }
-
-    // User specified path
-    else {
-        dir = newDir;
-    }
+    // If user did not provide a path, set the path to HOME
+    newDir ? (dir = newDir) : (dir = getenv("HOME"));
 
     // Path is not valid
     if (chdir(dir) != 0){
@@ -331,17 +378,22 @@ void changeDir(char* newDir) {
         fflush(stdout);
         return;
     }
-
-    // Return current working dircectory
-    getcwd(cwd, sizeof(cwd));
+    
     return;
 }
 
-// Exploration: Processes and I/O
+/*
+ * Function: redirectIO
+ * Implements input and output redirection
+ * 
+ * inputFile: the name of the desired input file
+ * outputFile: the name of the desired output file
+ * returns: (int) 0 for successful redirection, 1 for all others
+*/
 int redirectIO(char* inputFile, char* outputFile) {
 
     if (inputFile) {
-        // Open source file
+        // Open source file for reading
         int sourceFD = open(inputFile, O_RDONLY);
         if (sourceFD == -1) {
             printf("cannot open %s for input\n", inputFile);
@@ -378,59 +430,71 @@ int redirectIO(char* inputFile, char* outputFile) {
     return(0);
 }
 
-
-
-
+/*
+ * Function: handler
+ * Waits for background child processes to end and notifies the user when a 
+ * a process has exited or was termintated by a signal
+ * 
+ * returns: none
+*/
 void handler(int sig)
 {
-    //pid_t pid = wait(NULL);
-    int status;
+    int status;  // store the exit value of a child process
 
+    // get he pid of any background child process that ends
     pid_t pid = waitpid(-1, &status, WNOHANG);
 
+    // pid is a from a child process
     if (pid > 0) {
+
+        // process has exited, set the global variables
         if (WIFEXITED(status)) {
-            int es = WEXITSTATUS(status);
-            printf("background pid %d is done: exit value %d\n", pid, es);
-            fflush(stdout);
+            exit_pid = pid;
+            exit_value = WEXITSTATUS(status);
         }
+
+        // process was terminated by a signal, set the global variables
         else if (WIFSIGNALED(status)) {
-            printf("background pid %d is done: terminated by signal %d\n", pid, WTERMSIG(status));
-            fflush(stdout);
+            exit_pid = pid;
+            exit_value = WTERMSIG(status);
         }
-
     }
-
-    /* WARNING : to show the call of the handler, do not do that
-       in a 'real' code, we are in a handler of a signal */
-    //printf("Child pid %i ended (signal %i)\n", pid, sig);
-
-    /* does 'something' to allow the parent to know chpid
-       terminated in a way compatible with parent requirement */
 }
 
-//void handle_SIGINT(int signo) {
-//    char* message = "terminated by signal 2\n";
-//    write(STDOUT_FILENO, message, 23);
-//    printf("current_pid: %i", current_pid);
-//    kill(current_pid, SIGINT);
-//}
-
+/*
+ * Function: handle_SIGTSTP
+ * Notifies user when shell has entered/exited foreground only mode
+ * 
+ * returns: none
+*/
 void handle_SIGTSTP(int signo) {
+
+    // Notify user that the shell is in foreground only mode
     if (sigtstpState == 0) {
         char* message = "\nEntering foreground-only mode (& is now ignored)\n";
-        sigtstpState = 1;
+        sigtstpState = 1;   // update the SIGTSTP flag
         write(STDOUT_FILENO, message, 50);
     }
+
+    // Notify user that the shell has exited foreground only mode
     else {
         char* message = "\nExiting foreground-only mode\n";
-        sigtstpState = 0;
+        sigtstpState = 0;   // reset the SIGTSTP flag
         write(STDOUT_FILENO, message, 30);
     }
 
     return;
 }
 
+/*
+ * Function: storePidInArray
+ * Stores a PID in an array. A PID is added to the array every time a new 
+ * process is forked. Upone exit from the shell, the PID
+ * 
+ * pid: the PID to be stored
+ * outputFile: the name of the desired output file
+ * returns: (int) 0 for successful redirection, 1 for all others
+*/
 void storePidInArray(pid_t pid, int *pidArray) {
     int i = 0;
     while (pidArray[i] != -1) {
@@ -440,12 +504,21 @@ void storePidInArray(pid_t pid, int *pidArray) {
     return;
 }
 
+/*
+ * Function: execCommand
+ * Forks a child process and executes a given command.
+ *
+ * parsedInput: the parsed input from the user
+ * pidArray: the array in which PIDs are stored
+ * returns: (int) the exit or termination value of the child process
+*/
 int execCommand(struct userInput* parsedInput, int *pidArray) {
-
+    int pid;
     pid_t spawnPid = -5;
     int childExitMethod = -5;
     int childStatus;
 
+    // Initialize the sigation structure and set conditions for bg/fg processes
     struct sigaction SIGINT_action = { 0 };
     // For background processes, ignore ctrl+c
     if (parsedInput->background == 1) {
@@ -454,56 +527,49 @@ int execCommand(struct userInput* parsedInput, int *pidArray) {
         SIGINT_action.sa_handler = SIG_IGN;
         // No flags set
         SIGINT_action.sa_flags = 0;
-        // Install our signal handler
-        sigaction(SIGINT, &SIGINT_action, NULL);
     }
-
-     //For foreground processes, do not ignore ctrl+c
+     // For foreground processes, do not ignore ctrl+c
     else {
-        // Fill out the SIGINT_action struct
-        // Register handle_SIGINT as the signal handler
+        // Set the sa_handler to the default action for SIGINT
         SIGINT_action.sa_handler = SIG_DFL;
         // Block all catchable signals while handle_SIGINT is running
         sigfillset(&SIGINT_action.sa_mask);
         // No flags set
         SIGINT_action.sa_flags = 0;
-        sigaction(SIGINT, &SIGINT_action, NULL);
     }
+    // Install our signal handler
+    sigaction(SIGINT, &SIGINT_action, NULL);
 
+    // Fork a child process
     spawnPid = fork();
 
-    if (spawnPid > 0) {
-        current_pid = spawnPid;
-    }
-
-    int pid;
-
-
     switch (spawnPid) {
+    // Fork error
     case -1:
         perror("fork()\n");
         return 1;
         break;
 
+    // In the child process
     case 0:
-
+        // Get the pid and display to the user
         pid = getpid();
         if (parsedInput->background == 1) {
             printf("background pid is %d\n", pid);
             fflush(stdout);
         }
+
+        // Execute the command
         execvp(parsedInput->command, parsedInput->args);
-        fflush(stdout);
-        //fprintf(stderr, "%s", parsedInput->command);
-        //perror("");
+
+        // Exec error
         printf("%s: no such file or directory\n", parsedInput->command);
         fflush(stdout);
-
         return 1;
         break;
 
+    // In the parent process
     default:
-
         // set the sa_handler to ignore SIGINT
         SIGINT_action.sa_handler = SIG_IGN;
         // No flags set
@@ -511,194 +577,25 @@ int execCommand(struct userInput* parsedInput, int *pidArray) {
         // Install our signal handler
         sigaction(SIGINT, &SIGINT_action, NULL);
 
-        // In the parent process
-        // Wait for child's termination
+        // Wait for child's termination if child is running in foreground
         if (parsedInput->background != 1) {
             spawnPid = waitpid(spawnPid, &childStatus, 0);
+            storePidInArray(spawnPid, pidArray);    // store the PID
 
-       
-
-            storePidInArray(spawnPid, pidArray);
+            // Notify user if the child process was terminated by a signal
             if (WIFSIGNALED(childStatus)) {
                 printf("terminated by signal %d\n", WTERMSIG(childStatus));
                 fflush(stdout);
                 return WTERMSIG(childStatus);
             }
+            // Notify the user if the child process exited
             else if (WIFEXITED(childStatus)) {
                 return WEXITSTATUS(childStatus);
             }
-         
-
         }
+        // Store background PID in the array
         storePidInArray(spawnPid, pidArray);
-
-
-
-        //else {
-        //    do {
-        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-        //    } while (!WIFEXITED(childStatus) && !WIFSIGNALED(childStatus));
-        //    if (WIFEXITED(childStatus)) {
-        //        printf("exited, status=%d\n", WEXITSTATUS(childStatus));
-        //    }
-        //    /*spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-        //    while (spawnPid == 0) {
-        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-        //    }
-        //    printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);*/
-        //  /*  while (spawnPid == 0) {
-        //        spawnPid = waitpid(spawnPid, &childStatus, WNOHANG);
-
-        //    }*/
-        //}
         break;
     }
-
-    return pid;
 }
 
-
-int main(void) {
-
-    // Initialize sigaction struct
-    struct sigaction SIGINT_action = { 0 }, SIGTSTP_action = { 0 };
-
-
-
-
-    // set the sa_handler to ignore SIGINT
-    SIGINT_action.sa_handler = SIG_IGN;
-    // No flags set
-    SIGINT_action.sa_flags = 0;
-    // Install our signal handler
-    sigaction(SIGINT, &SIGINT_action, NULL);
-  
-    // SIGTSTP
-    SIGTSTP_action.sa_handler = handle_SIGTSTP;
-    // Block all catchable signals while handle_SIGUSR2 is running
-    sigfillset(&SIGTSTP_action.sa_mask);
-    // Set auto restart of interrupted system calls
-    SIGTSTP_action.sa_flags = SA_RESTART;
-    // Install our signal handler
-    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
-
-
-
-    struct userInput* parsedInput;
-    char* inputString;
-    inputString = malloc(2048 * sizeof(char));
-    memset(inputString, '\0', 2048);
-
-    // Initialize new linked list of processes
-    // The head of the linked list
-    struct process* head = malloc(sizeof(struct process));
-    head = NULL;
-    // The tail of the linked list
-    struct process* tail = malloc(sizeof(struct process));
-    tail = NULL;
-
-    int pidArray[1000];
-    memset(pidArray, -1, sizeof(pidArray));
-
-
-
-    pid_t pid;
-    int status;
-    int exitValue = 0;
-
-    for(;;) {
-   /*     int i = 0;
-        while (pidArray[i] != -1) {
-            printf("\n**pid%i: %i\n", i, pidArray[i]);
-            i++;
-        }*/
-
-       /* pid = waitpid(-1, &status, WNOHANG);
-        if (pid > 0)
-            printf("background pid %d is done: exit value %d\n", pid, status);*/
-
-        // Get input from user
-        printf(": ");
-        fflush(stdout);
-        fgets(inputString, 2048, stdin);
-
-        // Ignore comments ("#") and blank lines 
-        if (strncmp(inputString, "#", 1) == 0 || inputString[0] == '\n') {
-            continue;
-        }
-
-        // Transform any expansion variables ("$$") in the input
-        char* expandedString = variableExpansion(inputString);
-
-        // Parse the input into a struct
-        parsedInput = parseInputString(expandedString);
-        //printStruct(parsedInput);
-
-        // Built in command: exit
-        if (strcmp(parsedInput->command, "exit") == 0) {
-            //printProcesses(head);
-            int i = 0;
-            while (pidArray[i] != -1) {
-                int result = kill(pidArray[i], SIGKILL);
-                //printf("\npid%i: %i  ->  %i", i, pidArray[i], result);
-                i++;
-            }
-            //printf("\n");
-            return EXIT_SUCCESS;
-        }
-
-        // Built in command: cd
-        else if (strcmp(parsedInput->command, "cd") == 0) {
-            changeDir(parsedInput->args[1]);
-        }
-
-        // Built in command: status
-        else if (strcmp(parsedInput->command, "status") == 0) {
-            if (exitValue <= 1) {
-                printf("exit value %i\n", exitValue);
-                fflush(stdout);
-
-            }
-            else {
-                printf("terminated by signal %i\n", exitValue);
-                fflush(stdout);
-            }
-        }
-
-        // Handle input/output redirection
-        else if (parsedInput->inputFile || parsedInput->outputFile) {
-            int saved_stdout = dup(1);
-            int saved_stdin = dup(0);
-
-            exitValue = redirectIO(parsedInput->inputFile, parsedInput->outputFile);
-            if (exitValue == 0) {
-                //exitValue = execCommand(parsedInput, head, tail);
-                exitValue = execCommand(parsedInput, pidArray);
-            }
-
-            dup2(saved_stdout, 1);
-            close(saved_stdout);
-
-            dup2(saved_stdin, 0);
-            close(saved_stdin);
-        }
-
-        // Execute all other commands
-        else {
-            // Ignore the background operator ("&") if the shell is in foreground only mode
-            if ( (sigtstpState == 1) && (parsedInput->background == 1)) {
-                parsedInput->background = 0;
-            }
-
-           //pid = execCommand(parsedInput, head, tail);
-           exitValue = execCommand(parsedInput, pidArray);
-           
-
-           //head = storePid(exitValue, head, tail);
-           //printProcesses(head);
-        }
-    }
-    
-
-    return EXIT_SUCCESS;
-}
