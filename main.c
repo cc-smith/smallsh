@@ -11,7 +11,7 @@
 #include <stdbool.h>
 #include <sys/wait.h> 
 int sigtstpState = 0;
-
+pid_t current_pid = 0;
 
 /* struct for user input */
 struct userInput
@@ -394,10 +394,11 @@ void handler(int sig)
             printf("background pid %d is done: exit value %d\n", pid, es);
             fflush(stdout);
         }
-        else {
-            printf("background pid %d is done: terminated by signal %d\n", pid, sig);
+        else if (WIFSIGNALED(status)) {
+            printf("background pid %d is done: terminated by signal %d\n", pid, WTERMSIG(status));
             fflush(stdout);
         }
+
     }
 
     /* WARNING : to show the call of the handler, do not do that
@@ -408,10 +409,12 @@ void handler(int sig)
        terminated in a way compatible with parent requirement */
 }
 
-void handle_SIGINT(int signo) {
-    char* message = "terminated by signal 2\n";
-    write(STDOUT_FILENO, message, 23);
-}
+//void handle_SIGINT(int signo) {
+//    char* message = "terminated by signal 2\n";
+//    write(STDOUT_FILENO, message, 23);
+//    printf("current_pid: %i", current_pid);
+//    kill(current_pid, SIGINT);
+//}
 
 void handle_SIGTSTP(int signo) {
     if (sigtstpState == 0) {
@@ -459,7 +462,7 @@ int execCommand(struct userInput* parsedInput, int *pidArray) {
     else {
         // Fill out the SIGINT_action struct
         // Register handle_SIGINT as the signal handler
-        SIGINT_action.sa_handler = handle_SIGINT;
+        SIGINT_action.sa_handler = SIG_DFL;
         // Block all catchable signals while handle_SIGINT is running
         sigfillset(&SIGINT_action.sa_mask);
         // No flags set
@@ -468,6 +471,11 @@ int execCommand(struct userInput* parsedInput, int *pidArray) {
     }
 
     spawnPid = fork();
+
+    if (spawnPid > 0) {
+        current_pid = spawnPid;
+    }
+
     int pid;
 
 
@@ -495,21 +503,29 @@ int execCommand(struct userInput* parsedInput, int *pidArray) {
         break;
 
     default:
-       
+
+        // set the sa_handler to ignore SIGINT
+        SIGINT_action.sa_handler = SIG_IGN;
+        // No flags set
+        SIGINT_action.sa_flags = 0;
+        // Install our signal handler
+        sigaction(SIGINT, &SIGINT_action, NULL);
 
         // In the parent process
         // Wait for child's termination
         if (parsedInput->background != 1) {
             spawnPid = waitpid(spawnPid, &childStatus, 0);
-            storePidInArray(spawnPid, pidArray);
 
-            if (WIFEXITED(childStatus)) {
+       
+
+            storePidInArray(spawnPid, pidArray);
+            if (WIFSIGNALED(childStatus)) {
+                printf("terminated by signal %d\n", WTERMSIG(childStatus));
+            }
+            else if (WIFEXITED(childStatus)) {
                 return WEXITSTATUS(childStatus);
             }
-            else if (WIFSTOPPED(childStatus)) {
-                //printf("terminated by signal %d\n", WSTOPSIG(childStatus));
-                return WSTOPSIG(childStatus);
-            }
+         
 
         }
         storePidInArray(spawnPid, pidArray);
@@ -544,6 +560,9 @@ int main(void) {
 
     // Initialize sigaction struct
     struct sigaction SIGINT_action = { 0 }, SIGTSTP_action = { 0 };
+
+
+
 
     // set the sa_handler to ignore SIGINT
     SIGINT_action.sa_handler = SIG_IGN;
