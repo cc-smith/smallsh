@@ -388,7 +388,7 @@ void handler(int sig)
 
     pid_t pid = waitpid(-1, &status, WNOHANG);
 
-    if (pid != -1) {
+    if (pid > 0) {
         if (WIFEXITED(status)) {
             int es = WEXITSTATUS(status);
             printf("background pid %d is done: exit value %d\n", pid, es);
@@ -521,6 +521,8 @@ int execCommand(struct userInput* parsedInput, int *pidArray) {
             storePidInArray(spawnPid, pidArray);
             if (WIFSIGNALED(childStatus)) {
                 printf("terminated by signal %d\n", WTERMSIG(childStatus));
+                fflush(stdout);
+                return WTERMSIG(childStatus);
             }
             else if (WIFEXITED(childStatus)) {
                 return WEXITSTATUS(childStatus);
