@@ -3,7 +3,9 @@
 * Author: Chris Smith
 * Program: smallsh.c
 * Date: 11/1/2021
-* This program is an implementation of a shell in C.
+* This program is an implementation of a shell in C. The commands "cd", "exit",
+* and "status" are built into the shell.  All other commands are passed to 
+* exec().
 */
 
 #include <dirent.h>
@@ -23,16 +25,15 @@
 #define MAX_LENGTH 2048     // max length of command line input
 int sigtstpState = 0;       // flag for storing the state of SIGTSTP
 
-
-static pid_t exit_pid = 0;
-static int exit_value = -5;
+static pid_t exit_pid = 0;  // keeps track of exiting bg processes
+static int exit_value = -5; // stores the exit value of bg process
 
 
 // struct for storing user input 
 struct userInput
 {
     char* command;
-    char* args[512];
+    char* args[MAX_ARGS];
     char* inputFile;
     char* outputFile;
     int background;
@@ -69,8 +70,8 @@ int main(void) {
 
     // Allocate space to store user input string 
     char* inputString;
-    inputString = malloc(2048 * sizeof(char));
-    memset(inputString, '\0', 2048);
+    inputString = malloc(MAX_LENGTH * sizeof(char));
+    memset(inputString, '\0', MAX_LENGTH);
 
     // Initialize struct where the parsed user input will be stored
     struct userInput* parsedInput;
@@ -93,7 +94,7 @@ int main(void) {
         // Get input from user
         printf(": ");
         fflush(stdout);
-        fgets(inputString, 2048, stdin);
+        fgets(inputString, MAX_LENGTH, stdin);
 
         // Ignore comments ("#") and blank lines 
         if (strncmp(inputString, "#", 1) == 0 || inputString[0] == '\n') {
@@ -109,13 +110,12 @@ int main(void) {
         // Execute built in command: exit
         if (strcmp(parsedInput->command, "exit") == 0) {
             int i = 0;
-
             // Loop throught the array of PID's and kill each process
             while (pidArray[i] != -1) {
+                //printf("pid%i: %i\n", i, pidArray[i]);
                 int result = kill(pidArray[i], SIGKILL);
                 i++;
             }
-
             // Exit shell
             return EXIT_SUCCESS;
         }
@@ -553,11 +553,16 @@ int execCommand(struct userInput* parsedInput, int *pidArray) {
         // Exec error
         printf("%s: no such file or directory\n", parsedInput->command);
         fflush(stdout);
+        exit(1);
+
         return 1;
         break;
 
     // In the parent process
     default:
+
+        pid = getpid();
+        storePidInArray(spawnPid, pidArray);
         // set the sa_handler to ignore SIGINT
         SIGINT_action.sa_handler = SIG_IGN;
         // No flags set
